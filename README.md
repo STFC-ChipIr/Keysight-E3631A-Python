@@ -1,4 +1,17 @@
-# Keysight-E3631A-Python
+# Agilent/Keysight-E3631A-Python
+ 
+A fork of https://github.com/psmd-iberutaru/Keysight-E3631A-Python, adding basic logging and plotting capabilities.
+
+Log voltage and current to .txt files with (replace 'COM_X' with the serial port the PSU is connected to):
+
+```bash
+py .\main.py --current current_log.txt --voltage voltage_log.txt COM_X
+```
+
+![Screenshot](docs/screenshot.png)
+
+# Original README
+
 This repository contains a class which acts as a Python interface for the remote operation of a Keysight E3631A Triple Output DC Power Supply. [The manual for the device](https://github.com/psmd-iberutaru/Keysight-E3631A-Python/blob/master/Keysight_E3631A_Factory_Manual.pdf).
 
 Allegiant initially developed this power supply, the ownership was transferred to Keysight.
