@@ -4,6 +4,8 @@ from PySide6 import QtWidgets, QtGui, QtCore
 import pyqtgraph as pg
 
 import argparse
+import json
+import time
 
 from datetime import datetime
 
@@ -21,17 +23,47 @@ class PSUWorker(QtCore.QObject):
         self.voltage = voltage
 
         self.psu = keysight.Keysight_E3631A(port=port, _sound=not silent)
+        # self.psu.send_scpi_command("DISPlay:WINDow:STATe OFF")
     
     def run(self):
+
+        threshold_crossed = None
         while True:
+
+            with open("limits.json", "r") as f:
+                limits_json = json.loads(f.read())
+
             if self.current != "":
-                current = self.psu.send_scpi_command("MEASure:CURRent:DC? P6V")
+                current = self.psu.send_scpi_command("MEASure:CURRent:DC?")
                 self.read_current.emit(float(current))
 
                 self.write_to_log(self.current, current)
+
+                if float(current) > limits_json["current_threshold_mA"] / 1000:
+
+                    if threshold_crossed is None:
+                        threshold_crossed = datetime.now()
+
+                    # If threshold has been crossed for > hold_time, set voltage to 0
+                    elif (datetime.now() - threshold_crossed).total_seconds() > limits_json["hold_time"]:
+                        self.psu.set_P6V_voltage(0)
+
+                        # Keep PSU at 0V for cut_time
+                        time.sleep(limits_json["cut_time"])
+
+                        # Return to 3.3V
+                        self.psu.set_P6V_voltage(3.3)
+
+                        with open("latchup_log.txt", "a") as f:
+                            f.write(f"{threshold_crossed}\t{datetime.now()}\n")
+
+                        threshold_crossed = None
+
+                else:
+                    threshold_crossed = None
                 
             if self.voltage != "":
-                voltage = self.psu.send_scpi_command("MEASure:VOLTage:DC? P6V")
+                voltage = self.psu.send_scpi_command("MEASure:VOLTage:DC?")
                 self.read_voltage.emit(float(voltage))
 
                 self.write_to_log(self.voltage, voltage)
@@ -110,9 +142,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     
     def on_current_read(self, current: float):
+        
+        # if len(self.current_time) > 0:
+        #     prev_time = self.current_time[-1]
         timestamp = datetime.now()
         self.current_time.append(timestamp.timestamp())
         self.current_values.append(current * 1000)
+
+        # if len(self.current_time) > 0:
+        #     print(f"interval: {timestamp.timestamp() - prev_time}")
 
         self.current_plot.setData(self.current_time, self.current_values)
 

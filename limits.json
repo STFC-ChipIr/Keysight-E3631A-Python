@@ -1,0 +1,6 @@
+{
+    "voltage": 3.3,
+    "current_threshold_mA": 2000,
+    "hold_time": 1,
+    "cut_time": 1
+}
