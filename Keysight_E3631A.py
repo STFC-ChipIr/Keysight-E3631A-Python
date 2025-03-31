@@ -40,7 +40,7 @@ USER_MIN_N25V_CURRENT = copy.deepcopy(_FACTORY_MIN_N25V_CURRENT)
 USER_MAX_N25V_CURRENT = copy.deepcopy(_FACTORY_MAX_N25V_CURRENT)
 
 # Default timeout value.
-DEFAULT_TIMEOUT = 15
+DEFAULT_TIMEOUT = 2
 # The number of resolved digits kept by internal rounding
 # by the power supply.
 _SUPPLY_RESOLVED_DIGITS = 4

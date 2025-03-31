@@ -34,7 +34,7 @@ class PSUWorker(QtCore.QObject):
                 limits_json = json.loads(f.read())
 
             if self.current != "":
-                current = self.psu.send_scpi_command("MEASure:CURRent:DC?")
+                current = self.psu.send_scpi_command("MEASure:CURRent:DC?", _escape=True)
                 self.read_current.emit(float(current))
 
                 self.write_to_log(self.current, current)
@@ -43,17 +43,22 @@ class PSUWorker(QtCore.QObject):
 
                     if threshold_crossed is None:
                         threshold_crossed = datetime.now()
+                        print("Threshold crossed")
 
                     # If threshold has been crossed for > hold_time, set voltage to 0
                     elif (datetime.now() - threshold_crossed).total_seconds() > limits_json["hold_time"]:
-                        self.psu.set_P6V_voltage(0)
 
-                        # Keep PSU at 0V for cut_time
+                        print("Latchup detected - turning off output")
+                        self.psu.send_scpi_command("OUTPut:STATe OFF", _escape=True)
+                        
+                        # Keep output off for cut_time
+                        print(f"Waiting {limits_json['cut_time']}s (cut time)")
                         time.sleep(limits_json["cut_time"])
 
                         # Return to 3.3V
-                        self.psu.set_P6V_voltage(3.3)
-
+                        print(f"Turning output back on")
+                        self.psu.send_scpi_command("OUTPut:STATe ON", _escape=True)
+                        
                         with open("latchup_log.txt", "a") as f:
                             f.write(f"{threshold_crossed}\t{datetime.now()}\n")
 
