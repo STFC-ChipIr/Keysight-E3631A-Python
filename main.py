@@ -7,6 +7,9 @@ import argparse
 import json
 import time
 
+import numpy as np
+import numpy.typing as npt
+
 from datetime import datetime
 
 pg.setConfigOptions(antialias=True)
@@ -81,7 +84,7 @@ class PSUWorker(QtCore.QObject):
 
 class MainWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, port: str, current: str, voltage: str, silent: bool):
+    def __init__(self, port: str, current: str, voltage: str, current_in: str, voltage_in: str, silent: bool):
         super(MainWindow, self).__init__()
 
         self.current = current
@@ -126,16 +129,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.p1.vb.sigResized.connect(self.updateViews)
 
+        if current_in != "":
+            x, y = self._read_data(current_in)
+            self.current_plot.setData(x, y)
+        
+        if voltage_in != "":
+            x, y = self._read_data(voltage_in)
+            self.voltage_plot.setData(x, y)
 
-        self.worker = PSUWorker(port=port, current=current, voltage=voltage, silent=silent)
-        self.worker.read_current.connect(self.on_current_read)
-        self.worker.read_voltage.connect(self.on_voltage_read)
 
-        self.t = QtCore.QThread(parent=self)
-        self.worker.moveToThread(self.t)
-        self.t.started.connect(self.worker.run)
-        self.t.start()
+        if current != "" or voltage != "":
+            self.worker = PSUWorker(port=port, current=current, voltage=voltage, silent=silent)
+            self.worker.read_current.connect(self.on_current_read)
+            self.worker.read_voltage.connect(self.on_voltage_read)
+
+            self.t = QtCore.QThread(parent=self)
+            self.worker.moveToThread(self.t)
+            self.t.started.connect(self.worker.run)
+            self.t.start()
     
+
+    def _read_data(self, path: str) -> tuple[npt.NDArray, npt.NDArray]:
+        with open(path, "r") as f:
+            data = f.readlines()
+            
+        split_data = [(datetime.fromisoformat(x.strip().split("\t")[0]).timestamp(), float(x.strip().split("\t")[1]) * 1000) for x in data]
+        x, y = zip(*split_data)
+        return np.array(x), np.array(y)
+    
+
     def updateViews(self):
         ## view has resized; update auxiliary views to match
         self.p2.setGeometry(self.p1.vb.sceneBoundingRect())
@@ -170,18 +192,20 @@ class MainWindow(QtWidgets.QMainWindow):
     
 
 parser = argparse.ArgumentParser()
-parser.add_argument("port", type=str)
+parser.add_argument("--port", type=str)
 parser.add_argument("--current", type=str, default="")
 parser.add_argument("--voltage", type=str, default="")
+parser.add_argument("--current_in", type=str, default="")
+parser.add_argument("--voltage_in", type=str, default="")
 parser.add_argument("--silent", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()
 
-    print(f"Port: {args.port}\nCurrent log: {args.current}\nVoltage log: {args.voltage}\nSilent: {args.silent}")
+    print(f"Port: {args.port}\nCurrent log: {args.current}\nVoltage log: {args.voltage}\nCurrent in: {args.current_in}\nVoltage in: {args.voltage_in}\nSilent: {args.silent}")
 
     app = QtWidgets.QApplication()
-    window = MainWindow(port=args.port, current=args.current, voltage=args.voltage, silent=args.silent)
+    window = MainWindow(port=args.port, current=args.current, voltage=args.voltage, current_in=args.current_in, voltage_in=args.voltage_in, silent=args.silent)
     window.show()
     app.exec()
 
