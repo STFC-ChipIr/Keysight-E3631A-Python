@@ -4,6 +4,11 @@ from PySide6 import QtWidgets, QtGui, QtCore
 import pyqtgraph as pg
 
 import argparse
+import json
+import time
+
+import numpy as np
+import numpy.typing as npt
 
 from datetime import datetime
 
@@ -21,17 +26,52 @@ class PSUWorker(QtCore.QObject):
         self.voltage = voltage
 
         self.psu = keysight.Keysight_E3631A(port=port, _sound=not silent)
+        # self.psu.send_scpi_command("DISPlay:WINDow:STATe OFF")
     
     def run(self):
+
+        threshold_crossed = None
         while True:
+
+            with open("limits.json", "r") as f:
+                limits_json = json.loads(f.read())
+
             if self.current != "":
-                current = self.psu.send_scpi_command("MEASure:CURRent:DC? P6V")
+                current = self.psu.send_scpi_command("MEASure:CURRent:DC?", _escape=True)
                 self.read_current.emit(float(current))
 
                 self.write_to_log(self.current, current)
+
+                if float(current) > limits_json["current_threshold_mA"] / 1000:
+
+                    if threshold_crossed is None:
+                        threshold_crossed = datetime.now()
+                        print("Threshold crossed")
+
+                    # If threshold has been crossed for > hold_time, set voltage to 0
+                    elif (datetime.now() - threshold_crossed).total_seconds() > limits_json["hold_time"]:
+
+                        print("Latchup detected - turning off output")
+                        self.psu.send_scpi_command("OUTPut:STATe OFF", _escape=True)
+                        
+                        # Keep output off for cut_time
+                        print(f"Waiting {limits_json['cut_time']}s (cut time)")
+                        time.sleep(limits_json["cut_time"])
+
+                        # Return to 3.3V
+                        print(f"Turning output back on")
+                        self.psu.send_scpi_command("OUTPut:STATe ON", _escape=True)
+                        
+                        with open("latchup_log.txt", "a") as f:
+                            f.write(f"{threshold_crossed}\t{datetime.now()}\n")
+
+                        threshold_crossed = None
+
+                else:
+                    threshold_crossed = None
                 
             if self.voltage != "":
-                voltage = self.psu.send_scpi_command("MEASure:VOLTage:DC? P6V")
+                voltage = self.psu.send_scpi_command("MEASure:VOLTage:DC?")
                 self.read_voltage.emit(float(voltage))
 
                 self.write_to_log(self.voltage, voltage)
@@ -44,7 +84,7 @@ class PSUWorker(QtCore.QObject):
 
 class MainWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, port: str, current: str, voltage: str, silent: bool):
+    def __init__(self, port: str, current: str, voltage: str, current_in: str, voltage_in: str, silent: bool):
         super(MainWindow, self).__init__()
 
         self.current = current
@@ -89,16 +129,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.p1.vb.sigResized.connect(self.updateViews)
 
+        if current_in != "":
+            x, y = self._read_data(current_in)
+            self.current_plot.setData(x, y)
+        
+        if voltage_in != "":
+            x, y = self._read_data(voltage_in)
+            self.voltage_plot.setData(x, y)
 
-        self.worker = PSUWorker(port=port, current=current, voltage=voltage, silent=silent)
-        self.worker.read_current.connect(self.on_current_read)
-        self.worker.read_voltage.connect(self.on_voltage_read)
 
-        self.t = QtCore.QThread(parent=self)
-        self.worker.moveToThread(self.t)
-        self.t.started.connect(self.worker.run)
-        self.t.start()
+        if current != "" or voltage != "":
+            self.worker = PSUWorker(port=port, current=current, voltage=voltage, silent=silent)
+            self.worker.read_current.connect(self.on_current_read)
+            self.worker.read_voltage.connect(self.on_voltage_read)
+
+            self.t = QtCore.QThread(parent=self)
+            self.worker.moveToThread(self.t)
+            self.t.started.connect(self.worker.run)
+            self.t.start()
     
+
+    def _read_data(self, path: str) -> tuple[npt.NDArray, npt.NDArray]:
+        with open(path, "r") as f:
+            data = f.readlines()
+            
+        split_data = [(datetime.fromisoformat(x.strip().split("\t")[0]).timestamp(), float(x.strip().split("\t")[1]) * 1000) for x in data]
+        x, y = zip(*split_data)
+        return np.array(x), np.array(y)
+    
+
     def updateViews(self):
         ## view has resized; update auxiliary views to match
         self.p2.setGeometry(self.p1.vb.sceneBoundingRect())
@@ -110,9 +169,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     
     def on_current_read(self, current: float):
+        
+        # if len(self.current_time) > 0:
+        #     prev_time = self.current_time[-1]
         timestamp = datetime.now()
         self.current_time.append(timestamp.timestamp())
         self.current_values.append(current * 1000)
+
+        # if len(self.current_time) > 0:
+        #     print(f"interval: {timestamp.timestamp() - prev_time}")
 
         self.current_plot.setData(self.current_time, self.current_values)
 
@@ -127,18 +192,20 @@ class MainWindow(QtWidgets.QMainWindow):
     
 
 parser = argparse.ArgumentParser()
-parser.add_argument("port", type=str)
+parser.add_argument("--port", type=str)
 parser.add_argument("--current", type=str, default="")
 parser.add_argument("--voltage", type=str, default="")
+parser.add_argument("--current_in", type=str, default="")
+parser.add_argument("--voltage_in", type=str, default="")
 parser.add_argument("--silent", action="store_true")
 
 if __name__ == "__main__":
     args = parser.parse_args()
 
-    print(f"Port: {args.port}\nCurrent log: {args.current}\nVoltage log: {args.voltage}\nSilent: {args.silent}")
+    print(f"Port: {args.port}\nCurrent log: {args.current}\nVoltage log: {args.voltage}\nCurrent in: {args.current_in}\nVoltage in: {args.voltage_in}\nSilent: {args.silent}")
 
     app = QtWidgets.QApplication()
-    window = MainWindow(port=args.port, current=args.current, voltage=args.voltage, silent=args.silent)
+    window = MainWindow(port=args.port, current=args.current, voltage=args.voltage, current_in=args.current_in, voltage_in=args.voltage_in, silent=args.silent)
     window.show()
     app.exec()
 
